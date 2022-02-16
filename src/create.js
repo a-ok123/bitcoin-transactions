@@ -81,6 +81,9 @@ const create=function(args,coin) {
 		prevamount+=parseFloat(val);
 	});
 	let res=testamount([prevamount,fees,tamount],coin);
+	//res[0] - fee; res[1] - always = 0; res[2] - change
+	console.log(res);
+
 	if (!res[0]) {
 		console.log('Something is wrong with your numbers, please check them with the testamount command');
 	} else {
@@ -169,15 +172,27 @@ const create=function(args,coin) {
 					coin.SEGWIT=false;
 				};
 			};
-			tx_.push([[inputs[i],prev,parseFloat(prevamount_[i]),type],parseInt(previndex_[i]),null,script,null,privs,saddr]);
+			tx_.push([
+				[
+					inputs[i],
+					prev,
+					parseFloat(prevamount_[i]),
+					type
+				],
+				parseInt(previndex_[i]),
+				null,
+				script,
+				null,
+				privs,
+				saddr]);
 			//script redeem (without op_pushdata) if multisig p2sh or p2wsh, if not null null
 			//type p2pkh, p2sh, p2wpkh, p2wsh
 			//pubkey [pubkey1, pubkey2,...]
 		});
-		if (!res[2]) {
+		if (!res[2]) { //if no change
 			tx=new Tx(coin,tx_,dest,null);
 			//dtype p2pkh, p2sh (for segwit nested) p2w
-		} else {
+		} else { // if need to send change back to source address
 			let rtype=tx_[0][0][3]; //type of refunded address
 			if ((rtype==='p2wpkh')||(rtype==='p2wsh')) {
 				rtype='p2sh';//refunded segwit address

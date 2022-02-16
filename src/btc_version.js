@@ -67,6 +67,23 @@ const version=function(v) {
 	if (v==='BTC') {
 		LEGACY_PATH="m/0'/0'/0'";
 		//default
+	} else if (v==='PSL') {
+		VERSION=2147483652; // 80000004 --> 4 | overwintered
+		SIGHASH_FORKID=0x00000000;
+		PSL_VERGROUPID=0x892F2085;
+		MAIN=0xfcb8da6b;
+		VERSION_='PSL';
+		p2pk=new Buffer('0ce3','hex');
+		p2sh=new Buffer('1af6','hex');
+		BIP143=false;
+		PORT=9933;
+		LASTBLOCK=223500;
+		PROTOCOL=170008;
+		NOP2SH=['P'];
+		NOP2SH2=['p'];
+		SATO=100000;
+		DEFAULT_PATH="m/44'/133'/0'/0/0";
+		prefix="Pastel Signed Message:\n";
 	} else if (v==='ZEC') {
 		VERSION=1;
 		SIGHASH_FORKID=0x00000000;
@@ -688,7 +705,8 @@ const version=function(v) {
 		SEG_MARKER,
 		SEG_FLAG,
 		BIP39_nb,
-		bch
+		bch,
+		PSL_VERGROUPID
 	};
 };
 

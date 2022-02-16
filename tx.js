@@ -30,9 +30,9 @@ let coin;
 
 const start=function(args) {
 	if (args.length) {
-		if (typeof document==='undefined') {
-			console.log(args);
-		};
+		// if (typeof document==='undefined') {
+		// 	console.log(args);
+		// };
 		try {
 			coin=version_(args[0]);
 			console.log('Version '+coin.VERSION_);

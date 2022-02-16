@@ -8,6 +8,8 @@ const Tx=function(coin,input,output,nLockTime) {
 	this.output=[];
 	this.res=[];
 	this.fees=0;
+	// console.log(input);
+	// console.log(output);
 	if (input) {
 		let all=false;
 		this.nLockTime=new Buffer(4);
@@ -26,10 +28,11 @@ const Tx=function(coin,input,output,nLockTime) {
 		input.forEach(function(inp) {
 			let data=inp[2];
 			let script=inp[3];
+			let pkey = inp[5]
 			if (data&&script) {
 				throw 'data and script are exclusive';
 			};
-			let privKey=format_privKey(inp[5],coin);
+			let privKey=format_privKey(pkey,coin);
 			let swbtcp=inp[6]?(new Buffer(inp[6],'hex')):null;
 			let pubKey;
 			if (script==='p2pkh') {
@@ -51,8 +54,20 @@ const Tx=function(coin,input,output,nLockTime) {
 			};
 			let ns=new Buffer(4);
 			ns.writeUInt32BE(inp[4]||0xffffffff);
-			this.input.push({hash:inp[0],n:inp[1],scriptSigLen:null,scriptSig:null,data:(data?tmp:null),script:(script?tmp:null),nSequence:ns,privKey:privKey,pubKey:pubKey,swbtcp:swbtcp});
-			//console.log(this.input);
+			this.input.push(
+				{
+					hash:inp[0],
+					n:inp[1],
+					scriptSigLen:null,
+					scriptSig:null,
+					data:(data?tmp:null),
+					script:(script?tmp:null),
+					nSequence:ns,
+					privKey:privKey,
+					pubKey:pubKey,
+					swbtcp:swbtcp
+				});
+			// console.log(this.input);
 			//script redeem (with op_pushdata even for segwit) if multisig p2sh or p2wsh or p2wsh2, if not null
 			//type p2pkh, p2sh, p2wpkh, p2wsh
 			//pubkey [pubkey1, pubkey2,...]
@@ -117,6 +132,7 @@ const Tx=function(coin,input,output,nLockTime) {
 			};
 			this.fees-=parseInt(out[1]*coin.SATO);
 			this.output.push({nValue:parseInt(out[1]*coin.SATO),scriptPubkeyLen:varlen(scriptPubkey.length),scriptPubkey:scriptPubkey,address:addr,type:out[2]});
+			// console.log(this.output);
 		},this);
 		if (!all) {
 			//sig_hash_all is always used except for a single output op_return
@@ -130,7 +146,16 @@ Tx.prototype.display_tx=function() {
 	let res=[];
 	let tmp=[];
 	let type;
-	res.push('nVersion '+this.nVersion.toString('hex'));
+	if (this.coin.VERSION_==='PSL') {
+		ver = this.nVersion.readUInt32LE();
+		overw = (0x80000004 >>> 31) === 1;
+		ver = ver & 0x7FFFFFFF;
+		res.push('nVersion: '+ver);
+		res.push('Overwintered: '+overw.toString());
+		res.push('versiongroupid: '+this.nverGroupId.toString('hex'));
+	} else {
+		res.push('nVersion: '+this.nVersion.toString('hex'));
+	}
 	res.push('nb input: '+this.nbinput);
 	this.input.forEach(function(inp) {
 		res.push('   -------');
@@ -213,6 +238,13 @@ Tx.prototype.display_tx=function() {
 		res.push('   type: '+out.type);
 	});
 	res.push('nLockTime '+this.nLockTime.toString('hex'));
+	if (this.coin.VERSION_==='PSL') {
+		res.push('expiryheight '+this.expiryheight.toString('hex'));
+		res.push('valueBalance '+this.valueBalance.toString('hex'));
+		res.push('vShieldedSpend '+this.vShieldedSpend.toString('hex'));
+		res.push('vShieldedOutput '+this.vShieldedOutput.toString('hex'));
+	}
+
 	res.forEach(function(txt) {
 		console.log(txt);
 	});
@@ -238,10 +270,36 @@ Tx.prototype.p2pk_sign=function(inp,scriptSig) {
 			console.log("------------ Spending public key could not be verified, you are probably trying to spend an output that you don't own");
 		};
 	};
-	inp.scriptSig=[[Buffer.concat([new Buffer(sign(scriptSig,inp.privKey)),this.sigHash.slice(0,1)]),Buffer.concat([new Buffer([inp.pubKey.length]),inp.pubKey]),(inp.swbtcp?inp.swbtcp:(new Buffer(0)))]]; //add pubkey
+	inp.scriptSig=[
+		[
+			Buffer.concat(
+				[
+					new Buffer(
+						sign(scriptSig,inp.privKey)
+					),
+					this.sigHash.slice(0,1)
+				]
+			),
+			Buffer.concat(
+				[
+					new Buffer(
+						[
+							inp.pubKey.length
+						]
+					),
+					inp.pubKey
+				]
+			),
+			(
+				inp.swbtcp?inp.swbtcp:(new Buffer(0))
+			)
+		]
+	]; //add pubkey
 	signatures=Buffer.concat(serialize_sig(inp.scriptSig,this.coin)); //add OP_PUSHDATA/length
 	data=inp.data?Buffer.concat(inp.data):(new Buffer(0));//pubkey with len
 	inp.scriptSigLen=varlen(Buffer.concat([signatures,data]).length);
+	// console.log(inp.scriptSig)
+	// console.log(signatures)
 };
 
 Tx.prototype.p2sh_sign=function(inp,scriptSig) {
@@ -290,10 +348,11 @@ Tx.prototype.sighash_sign=function() {
 		let p2something;
 		let addr;
 		let cb=function(data) {
+			console.log("cb:" + data);
 			if (data) {
 				let tx=new Tx(this.coin);
 				tx.deserialize(data);
-				//console.log(tx);
+				console.log(tx);
 				tx.display_tx();
 				inp.prevscriptPubkey=tx.output[inp.n].scriptPubkey;
 				inp.prevscriptPubkeyValue=tx.output[inp.n].nValue;
@@ -556,9 +615,15 @@ Tx.prototype.deserialize=function(data) {
 		m=32;
 		hash_.push(this.preblockhash);
 	};
-	let tmp=decodevarlen(data.slice(4+m));
+	let inpOff = 4;
+	if (this.coin.VERSION_==='PSL') {
+		this.nverGroupId=data.slice(4,8);
+		hash_.push(this.nverGroupId);
+		inpOff = 8;
+	}
+	let tmp=decodevarlen(data.slice(inpOff+m));
 	this.nbinput=tmp[0];
-	data=data.slice(4+m+tmp[1]);
+	data=data.slice(inpOff+m+tmp[1]);
 	if (this.nbinput) {
 		for (let i=0;i<this.nbinput;i++) {
 			let sLen=decodevarlen(data.slice(36));
@@ -591,7 +656,15 @@ Tx.prototype.deserialize=function(data) {
 			this.output.push({nValue:nValue,scriptPubkeyLen:data.slice(0,scriptPubkeyLen[1]),scriptPubkey:scriptPubkey,address:address,type:p2something});
 			data=data.slice(scriptPubkeyLen[1]+scriptPubkeyLen[0]);
 		};
-		this.nLockTime=data;
+		if (this.coin.VERSION_==='PSL') {
+			this.nLockTime = data.slice(0,4);
+			this.expiryheight=data.slice(4,8);
+			this.valueBalance = data.slice(8,12);
+			this.vShieldedSpend = data.slice(12,16);
+			this.vShieldedOutput = data.slice(16);
+		} else {
+			this.nLockTime=data;
+		}
 	} else { //segwit
 		let c=[];
 		let nb_w;
@@ -709,6 +782,11 @@ Tx.prototype.serialize_for_hash=function(i,sigHash) {
 		if ((this.coin.VERSION_==='BCD')||(this.coin.VERSION_==='BTT')) {
 			result.push(this.preblockhash);
 		};
+		if (this.coin.VERSION_==='PSL') {
+			let verGroupId=new Buffer(4);
+			verGroupId.writeUInt32LE(this.coin.PSL_VERGROUPID);
+			result.push(verGroupId);
+		}
 		result.push(new Buffer([this.nbinput]));
 		this.input.forEach(function(inp,j) {
 			let n=new Buffer(4);
@@ -728,7 +806,24 @@ Tx.prototype.serialize_for_hash=function(i,sigHash) {
 		if (sigHash.readUInt32LE()===this.coin.SIGHASH_NONE) {
 			result.push(new Buffer('00','hex'));
 		};
+		if (this.coin.VERSION_==='PSL') {
+			var ZERO = Buffer.from('0000000000000000000000000000000000000000000000000000000000000000', 'hex')
+			result.push(ZERO); //hashJoinSplits
+			result.push(ZERO); //hashShieldedSpends
+			result.push(ZERO); //hashShieldedOutputs
+		}
 		result.push(this.nLockTime);
+		if (this.coin.VERSION_==='PSL') {
+			let expHeight=new Buffer(4);
+			expHeight.writeUInt32LE(127066);
+			// expHeight.writeUInt32LE(217410);
+			result.push(expHeight);
+
+			let v=new Buffer(4);
+			v.writeUInt32LE(0);
+			result.push(v); //valueBalance
+		}
+
 		if (this.coin.FORKID_IN_USE!==undefined) {
 			let sigfork=sigHash.readUInt32LE();
 			if (this.coin.VERSION_!=="B2X") {
@@ -806,7 +901,7 @@ Tx.prototype.serialize_for_hash=function(i,sigHash) {
 
 Tx.prototype.serialize=function(boo) {
 	let result=[];
-	let hash_=[];
+	let hash_=[]; // hash for SEGWIT
 	let signatures=[];
 	result.push(this.nVersion);
 	hash_.push(this.nVersion);
@@ -814,6 +909,11 @@ Tx.prototype.serialize=function(boo) {
 		result.push(this.preblockhash);
 		hash_.push(this.preblockhash);
 	};
+	if (this.coin.VERSION_==='PSL') {
+		let verGroupId=new Buffer(4);
+		verGroupId.writeUInt32LE(this.coin.PSL_VERGROUPID);
+		result.push(verGroupId);
+	}
 	if (!this.coin.SEGWIT) {
 		result.push(new Buffer([this.nbinput]));
 		this.input.forEach(function(inp) {
@@ -833,6 +933,17 @@ Tx.prototype.serialize=function(boo) {
 			result.push(Buffer.concat([reverse(new Buffer(toHex(out.nValue,8),'hex')),out.scriptPubkeyLen,out.scriptPubkey]));
 		});
 		result.push(this.nLockTime);
+		if (this.coin.VERSION_==='PSL') {
+			let expHeight=new Buffer(4);
+			expHeight.writeUInt32LE(250000);
+			result.push(expHeight);
+
+			let v=new Buffer(4);
+			v.writeUInt32LE(0);
+			result.push(v);
+			result.push(v);
+			result.push(v);
+		}
 	} else {
 		let w=[];
 		result.push(new Buffer([this.coin.SEG_MARKER]));
